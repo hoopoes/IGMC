@@ -14,8 +14,8 @@ logger = make_logger(name='igmc_logger')
 pd.set_option("display.max_columns", 100)
 
 
-# 1. Loading
-data_dir = os.path.join(os.getcwd(),'data_dir')
+# 1. Load
+data_dir = os.path.join(os.getcwd(),'data')
 
 item_meta = pd.read_csv(os.path.join(data_dir, 'item_meta.csv'))
 item_meta = item_meta[['anime_id', 'genre']]
@@ -40,7 +40,7 @@ item_meta = item_meta.reset_index(drop=True)
 # Num Items: 9926
 
 
-# 2. Preprocessing
+# 2. Preprocess
 # genre encoding
 genres = set()
 for _, row in item_meta[['genre']].iterrows():
@@ -59,8 +59,7 @@ for index, row in item_meta.iterrows():
 item_features = item_features.fillna(0)
 
 # Rating 1~10 -> 1~5
-map_dict = {i:(i+1)//2 for i in range(1, 11, 2)}
-map_dict.update({i:i//2 for i in range(2, 11, 2)})
+map_dict = {i:(i+1)//2 for i in range(1, 11)}
 
 ratings['rating'] = ratings['rating'].map(map_dict)
 

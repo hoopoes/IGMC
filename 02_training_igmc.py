@@ -24,8 +24,8 @@ logger = make_logger(name='igmc_logger')
 pd.set_option("display.max_columns", 100)
 
 
-# 1. Loading
-data_dir = os.path.join(os.getcwd(), 'data_dir')
+# 1. Load
+data_dir = os.path.join(os.getcwd(), 'data')
 
 data = load_pickle(os.path.join(data_dir, 'processed_ratings.csv'))
 
@@ -41,9 +41,7 @@ data = data.values
 item_features = load_pickle(os.path.join(data_dir, 'processed_item_features.csv'))
 
 
-# 2. Preprocessing
-
-
+# 2. Preprocess
 # Train/Val/Test split
 data_train_val, data_test = train_test_split(data, test_size=0.2)
 data_train, data_val = train_test_split(data_train_val, test_size=0.2)

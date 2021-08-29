@@ -15,7 +15,9 @@ from torch_geometric.data import Data, Dataset
 from torch.optim import Adam
 from torch_geometric.data import DataLoader
 
-from tools import *
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
+
 from utils import *
 
 logger = make_logger(name='igmc_logger')
@@ -26,16 +28,21 @@ pd.set_option("display.max_columns", 100)
 data_dir = os.path.join(os.getcwd(), 'data_dir')
 
 data = load_pickle(os.path.join(data_dir, 'processed_ratings.csv'))
+
+num_users = np.unique(data.values[:, 0]).shape[0]
+num_items = np.unique(data.values[:, 1]).shape[0]
+
+logger.info(f"num_users: {num_users}, num_items: {num_items}")
+
+sample_ratio = 0.05
+data = data.sample(frac=sample_ratio)
 data = data.values
 
 item_features = load_pickle(os.path.join(data_dir, 'processed_item_features.csv'))
 
 
 # 2. Preprocessing
-num_users = np.unique(data[:, 0]).shape[0]
-num_items = np.unique(data[:, 1]).shape[0]
 
-logger.info(f"num_users: {num_users}, num_items: {num_items}")
 
 # Train/Val/Test split
 data_train_val, data_test = train_test_split(data, test_size=0.2)
@@ -84,9 +91,9 @@ def create_graphs(A, links, labels, h, max_nodes_per_hop, u_features, v_features
     return graphs
 
 
-train_graphs = create_graphs(adj_mat, train_links, train_labels, 1, 200, user_features, item_features)
-val_graphs = create_graphs(adj_mat, val_links, val_labels, 1, 200, user_features, item_features)
-test_graphs = create_graphs(adj_mat, test_links, test_labels, 1, 200, user_features, item_features)
+train_graphs = create_graphs(adj_mat, train_links, train_labels, 1, 50, user_features, item_features)
+#val_graphs = create_graphs(adj_mat, val_links, val_labels, 1, 200, user_features, item_features)
+#test_graphs = create_graphs(adj_mat, test_links, test_labels, 1, 200, user_features, item_features)
 
 
 # 해설
@@ -179,7 +186,7 @@ class IGMC(nn.Module):
         x = F.relu(self.lin1(x))
         x = F.dropout(x, p=0.5, training=self.training)
         out = self.lin2(x)
-        # out = out[:, 0]
+        out = out[:, 0]    # reshaping
         return out
 
     def reset_parameters(self):
@@ -189,34 +196,70 @@ class IGMC(nn.Module):
         self.lin2.reset_parameters()
 
 
-
-model = IGMC(
-    hidden_sizes=[32, 32, 32, 32], final_emb_size=128, num_relations=5, num_bases=4,
-    adj_dropout=0.2, force_undirected=False, num_features=4
-)
-
-total_params = sum(p.numel() for param in model.parameters() for p in param)
-print(f'Total number of parameters is {total_params}')
-
-
 # 5. Train
-epochs = 80
 batch_size = 50
-test_freq = 1
 ARR = 0 # 0.001
-lr = 1e-3
 lr_decay_step_size = 50
 lr_decay_factor = 0.1
 
 # Data Loader
-num_workers = mp.cpu_count()
+num_workers = 0    # mp.cpu_count()
 train_loader = DataLoader(train_graphs, batch_size, shuffle=True, num_workers=num_workers)
-test_loader = DataLoader(val_graphs, batch_size, shuffle=False, num_workers=num_workers)
+#val_loader = DataLoader(val_graphs, batch_size, shuffle=False, num_workers=num_workers)
+# inputs = next(iter(train_loader))
 
-inputs = next(iter(train_loader))
+
+# Pytorch Lightning Module
+class LightningIGMC(pl.LightningModule):
+    def __init__(self):
+        super().__init__()
+        self.model = IGMC(
+            hidden_sizes=[32, 32, 32, 32], final_emb_size=128, num_relations=5, num_bases=4,
+            adj_dropout=0.2, force_undirected=False, num_features=4)
+
+    def forward(self, x):
+        # forward: defines prediction/inference actions
+        score = self.model(x)
+        return score
+
+    def training_step(self, batch, batch_idx):
+        # training_step = training loop, independent of forward
+        # batch: torch_geometric.data.batch.Batch
+        y_pred = self.model(batch)
+        loss = F.mse_loss(y_pred, batch.y)
+
+        self.log(
+            name="train_loss", value=loss,
+            prog_bar=True, logger=True, on_step=True, on_epoch=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        y_pred = self.model(batch)
+        loss = F.mse_loss(y_pred, batch.y)
+
+        self.log(
+            name="val_loss", value=loss,
+            prog_bar=True, logger=True, on_step=True, on_epoch=True)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = Adam(self.parameters(), lr=1e-3)
+        return optimizer
 
 
-# Pytorch Lightning
+igmc_system = LightningIGMC()
+total_params = sum(p.numel() for param in igmc_system.model.parameters() for p in param)
+logger.info(f"Total number of parameters is {total_params}")
+
+trainer = pl.Trainer(
+    gpus=1,
+    auto_scale_batch_size="power",
+    deterministic=True,
+    min_epochs=5,
+    max_epochs=10
+)
+
+trainer.fit(model=igmc_system, train_dataloaders=train_loader)
 
 
 

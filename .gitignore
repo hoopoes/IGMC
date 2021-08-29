@@ -2,8 +2,4 @@ data/
 .idea/
 __pycache__/
 venv/
-lightning_logs/
-raw_data/
-data/
-data_dir/
 temp/

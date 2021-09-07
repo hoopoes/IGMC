@@ -2,23 +2,19 @@
 # 02 Training IGMC
 
 import os, sys
-import random
 import numpy as np
 import pandas as pd
 
-import scipy.sparse as sp
-import multiprocessing as mp
 from sklearn.model_selection import train_test_split
 
 import torch
-from torch_geometric.data import Data, Dataset
 from torch.optim import Adam
 from torch_geometric.data import DataLoader
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import Callback
 
 from utils import *
+from torch_custom_funcs import *
 
 logger = make_logger(name='igmc_logger')
 pd.set_option("display.max_columns", 100)
@@ -34,11 +30,14 @@ num_items = np.unique(data.values[:, 1]).shape[0]
 
 logger.info(f"num_users: {num_users}, num_items: {num_items}")
 
-sample_ratio = 0.05
+sample_ratio = 0.1
 data = data.sample(frac=sample_ratio)
 data = data.values
 
-item_features = load_pickle(os.path.join(data_dir, 'processed_item_features.csv'))
+# item_features = load_pickle(os.path.join(data_dir, 'processed_item_features.csv'))
+
+user_features = None
+item_features = None
 
 
 # 2. Preprocess
@@ -55,6 +54,7 @@ for row in data_train:
     adj_mat[row[0], row[1]] = row[2]
 adj_mat = adj_mat.tocsr()
 
+
 # user_item_edges = data_train[:, 0:2]
 # user_edges, item_edges = np.split(user_item_edges, indices_or_sections=2, axis=1)
 # idx_nonzero: flattened adjacency matrix indices of nonzero values (num_train, )
@@ -69,9 +69,6 @@ def get_links_and_labels(data):
 train_links, train_labels = get_links_and_labels(data_train)
 val_links, val_labels = get_links_and_labels(data_val)
 test_links, test_labels = get_links_and_labels(data_test)
-
-user_features = None
-item_features = item_features.values
 
 
 # 3. Extracting enclosing subgraphs
@@ -90,19 +87,11 @@ def create_graphs(A, links, labels, h, max_nodes_per_hop, u_features, v_features
 
 
 train_graphs = create_graphs(adj_mat, train_links, train_labels, 1, 50, user_features, item_features)
-#val_graphs = create_graphs(adj_mat, val_links, val_labels, 1, 200, user_features, item_features)
-#test_graphs = create_graphs(adj_mat, test_links, test_labels, 1, 200, user_features, item_features)
+val_graphs = create_graphs(adj_mat, val_links, val_labels, 1, 50, user_features, item_features)
+#test_graphs = create_graphs(adj_mat, test_links, test_labels, 1, 50, user_features, item_features)
 
-
-# 해설
 # train_graphs.get(0)
 # -> Data(edge_index=[2, 7226], edge_type=[7226], x=[297, 4], y=[1])
-
-# np.unique(train_graphs.get(0).edge_index[0].numpy()).shape
-# = np.unique(train_graphs.get(0).edge_index[1].numpy()).shape
-# user, item 구분 없이 모두 0~296 idx로 표현되는데 이는 torch_geometric의 특징
-# 즉, Data.x = (297, 4)로 user, item의 feature 길이가 같아야 함
-# 따라서 node feature를 사용할 경우 padding이 필수적임
 
 
 # 4. Define IGMC
@@ -177,7 +166,7 @@ class IGMC(nn.Module):
         users = data.x[:, 0] == 1
         items = data.x[:, 1] == 1
         x = torch.cat([concat_states[users], concat_states[items]], dim=1)
-        # 논문에서는 아래와 같이 conv layer를 다 통과하고 나서 side feature를 붙이는데
+        # 원본에서는 아래와 같이 conv layer를 다 통과하고 나서 side feature를 붙임
         # 이 부분은 변형의 여지가 있다. (처음부터 data.x에 다 집어 넣기)
         # 대신 그렇게 하면 위의 RGCN layer를 여러 개 만들어야 할 것이다. (길이가 다르므로)
 
@@ -203,17 +192,17 @@ lr_decay_factor = 0.1
 # Data Loader
 num_workers = 0    # mp.cpu_count()
 train_loader = DataLoader(train_graphs, batch_size, shuffle=True, num_workers=num_workers)
-#val_loader = DataLoader(val_graphs, batch_size, shuffle=False, num_workers=num_workers)
+val_loader = DataLoader(val_graphs, batch_size, shuffle=False, num_workers=num_workers)
 # inputs = next(iter(train_loader))
 
 
 # Pytorch Lightning Module
 class LightningIGMC(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, device):
         super().__init__()
         self.model = IGMC(
             hidden_sizes=[32, 32, 32, 32], final_emb_size=128, num_relations=5, num_bases=4,
-            adj_dropout=0.2, force_undirected=False, num_features=4)
+            adj_dropout=0.2, force_undirected=False, num_features=4).to(device)
 
     def forward(self, x):
         # forward: defines prediction/inference actions
@@ -245,7 +234,8 @@ class LightningIGMC(pl.LightningModule):
         return optimizer
 
 
-igmc_system = LightningIGMC()
+device =get_device()
+igmc_system = LightningIGMC(device)
 total_params = sum(p.numel() for param in igmc_system.model.parameters() for p in param)
 logger.info(f"Total number of parameters is {total_params}")
 
@@ -253,13 +243,10 @@ trainer = pl.Trainer(
     gpus=1,
     auto_scale_batch_size="power",
     deterministic=True,
-    min_epochs=5,
     max_epochs=10
 )
 
-trainer.fit(model=igmc_system, train_dataloaders=train_loader)
-
-
+trainer.fit(model=igmc_system, train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 
 

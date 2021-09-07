@@ -13,7 +13,7 @@ Original Paper: [Here](https://openreview.net/pdf?id=ByxxgCEYDS)
 #### Loss Graph  
 - 10% Sampling, 10 Epochs  
 
-<center><img src="/lightning_logs/train_loss.PNG" width="80%"></center>  
+<center><img src="/lightning_logs/train_loss.PNG" width="50%"></center>  
 
-<center><img src="/lightning_logs/val_loss.PNG" width="80%"></center>  
+<center><img src="/lightning_logs/val_loss.PNG" width="50%"></center>  
 
